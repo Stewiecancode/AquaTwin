@@ -36,6 +36,7 @@ import {
   statuses,
   evidenceSchema,
   detectAnomaly,
+  pipeDiameterSchema,
   type Role,
   type Incident,
 } from "../shared/domain.js";
@@ -72,16 +73,24 @@ async function authenticate(token: string): Promise<User> {
   const decoded = await getAuth(firebaseApp()).verifyIdToken(token, true);
   const doc = await getFirestore().collection("users").doc(decoded.uid).get();
   const profile = doc.data();
+  const role = z
+    .enum(["admin", "operator", "technician", "resident"])
+    .safeParse(profile?.role);
   if (
     !profile ||
-    !["admin", "operator", "technician", "resident"].includes(profile.role) ||
+    !role.success ||
     profile.municipality !== process.env.MUNICIPALITY_ID
   )
     fail("Municipal access denied", 403);
+  if (
+    role.data === "technician" &&
+    (typeof profile.team !== "string" || !profile.team.trim())
+  )
+    fail("Technician profile requires an assigned team", 403);
   return {
     uid: decoded.uid,
-    role: profile.role,
-    team: profile.team || "",
+    role: role.data,
+    team: typeof profile.team === "string" ? profile.team : "",
     municipality: profile.municipality,
   };
 }
@@ -91,8 +100,23 @@ const protect = async (req: Request, _res: Response, next: NextFunction) => {
       req.headers.authorization?.replace(/^Bearer /, "") || "",
     );
     next();
-  } catch {
-    next(Object.assign(new Error("Authentication required"), { status: 401 }));
+  } catch (error) {
+    const authErrorCodes = new Set([
+      "auth/argument-error",
+      "auth/id-token-expired",
+      "auth/id-token-revoked",
+      "auth/invalid-id-token",
+      "auth/user-disabled",
+      "auth/user-not-found",
+    ]);
+    const code = (error as { code?: string })?.code;
+    if (code && authErrorCodes.has(code)) {
+      next(
+        Object.assign(new Error("Authentication required"), { status: 401 }),
+      );
+      return;
+    }
+    next(error);
   }
 };
 const allow =
@@ -108,8 +132,27 @@ const allow =
   };
 const out = (res: Response, data: unknown, status = 200) =>
   res.status(status).json({ data });
-const emit = (event: string, data: unknown) =>
-  io.to("municipal").emit(event, data);
+const emit = (event: string, data: unknown) => {
+  for (const socket of io.sockets.sockets.values()) {
+    const user = socket.data.user as User | undefined;
+    if (!user || user.role === "resident") continue;
+    if (user.role === "technician") {
+      if (event.startsWith("simulation:")) continue;
+      if (event.startsWith("incident:") || event === "leak:suspected") {
+        const id =
+          typeof data === "object" && data !== null && "id" in data
+            ? String(data.id)
+            : "";
+        const linkedIncident = state.incidents.find(
+          (item) => item.id === id && item.team === user.team,
+        );
+        if (!linkedIncident) continue;
+      }
+      if (event === "system:error") continue;
+    }
+    socket.emit(event, data);
+  }
+};
 io.use(async (socket, next) => {
   try {
     const user = await authenticate(socket.handshake.auth.token || "");
@@ -214,10 +257,20 @@ api.post("/telemetry", async (req, res) => {
   sensor.reading =
     payload.value * sensor.calibration.scale + sensor.calibration.offset;
   sensor.updatedAt = now();
+  const pipeline = state.infrastructure_assets.find(
+    (asset) => asset.id === sensor.assetId && asset.type === "pipeline",
+  );
+  const exceedsPipeCapacity =
+    sensor.type === "Flow" &&
+    pipeline?.maxSafeFlowLpm != null &&
+    sensor.reading > pipeline.maxSafeFlowLpm;
   sensor.status =
-    sensor.reading < sensor.normalMin || sensor.reading > sensor.normalMax
+    exceedsPipeCapacity ||
+    sensor.reading < sensor.normalMin ||
+    sensor.reading > sensor.normalMax
       ? "warning"
       : "online";
+  if (exceedsPipeCapacity) sensor.status = "critical";
   const reading = {
     id: randomUUID(),
     sensorId: sensor.id,
@@ -248,6 +301,7 @@ function filtered(req: Request) {
   const ids = new Set(sensors.map((s) => s.id));
   const incidents = state.incidents.filter(
     (i) =>
+      (req.user?.role !== "technician" || i.team === req.user.team) &&
       (!q.zone || i.zone === q.zone) &&
       (!q.asset || i.assetId === q.asset) &&
       (!q.status || i.status === q.status) &&
@@ -329,6 +383,23 @@ api.get("/sensors/:id/readings", (req, res) =>
 api.get("/infrastructure", (_req, res) =>
   out(res, state.infrastructure_assets),
 );
+api.patch("/infrastructure/:id", allow("admin"), async (req, res) => {
+  const asset = state.infrastructure_assets.find(
+    (a) => a.id === req.params.id && a.type === "pipeline",
+  );
+  if (!asset) fail("Pipeline not found", 404);
+  const data = z
+    .object({
+      nominalDiameterMm: pipeDiameterSchema.transform(Number),
+      maxSafeVelocityMps: z.number().min(0.1).max(10),
+      maxSafeFlowLpm: z.number().min(1).max(100000),
+    })
+    .parse(req.body);
+  Object.assign(asset, data);
+  audit(req.user!.uid, "pipeline:thresholds-updated", asset.id);
+  await persist();
+  out(res, asset);
+});
 api.get("/incidents", (req, res) =>
   out(
     res,
@@ -348,6 +419,11 @@ function incident(req: Request) {
 }
 api.patch("/incidents/:id", async (req, res) => {
   const i = incident(req);
+  if (
+    req.user!.role === "technician" &&
+    !["Assigned", "In Progress"].includes(i.status)
+  )
+    fail("Technicians may only update active assigned work", 403);
   const data = z
     .object({
       status: z.enum(statuses).optional(),
@@ -469,16 +545,28 @@ api.post("/maintenance/tasks", allow("admin", "operator"), async (req, res) => {
 api.patch("/maintenance/tasks/:id", async (req, res) => {
   const task = state.maintenance_tasks.find((t) => t.id === req.params.id);
   if (!task) fail("Task not found", 404);
-  if (req.user!.role === "technician" && task.team !== req.user!.team)
+  const technician = req.user!.role === "technician";
+  if (technician && task.team !== req.user!.team)
     fail("Assigned team only", 403);
-  task.status = z.enum(["In Progress", "Completed"]).parse(req.body.status);
+  const status = z.enum(["In Progress", "Completed"]).parse(req.body.status);
+  if (
+    task.status === "Completed" ||
+    (task.status === "Scheduled" && status !== "In Progress") ||
+    (task.status === "In Progress" && status !== "Completed")
+  )
+    fail(
+      "Maintenance tasks must progress from Scheduled to In Progress to Completed",
+    );
+  task.status = status;
   state.maintenance_actions.push(
     audit(req.user!.uid, `maintenance:${task.status}`, task.id),
   );
   await persist();
   out(res, task);
 });
-api.get("/simulations", (_req, res) => out(res, state.simulation_sessions));
+api.get("/simulations", allow("admin", "operator"), (_req, res) =>
+  out(res, state.simulation_sessions),
+);
 api.post("/simulations/start", allow("admin", "operator"), async (req, res) => {
   if (!demo) fail("Simulation is isolated to demo mode", 403);
   const data = z
@@ -545,9 +633,19 @@ api.post(
     out(res, s);
   },
 );
-api.get("/notifications", (_req, res) =>
-  out(res, state.notifications.slice(-50).reverse()),
-);
+api.get("/notifications", (req, res) => {
+  const notifications =
+    req.user!.role === "technician"
+      ? state.notifications.filter((notification) =>
+          state.incidents.some(
+            (incident) =>
+              incident.id === notification.incidentId &&
+              incident.team === req.user!.team,
+          ),
+        )
+      : state.notifications;
+  out(res, notifications.slice(-50).reverse());
+});
 api.get("/settings", (_req, res) =>
   out(res, {
     ...state.settings[0],
@@ -674,11 +772,9 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   const e = err as Error & { status?: number };
   if (!e.status) console.error(e);
-  res
-    .status(e.status || 500)
-    .json({
-      error: e.status ? e.message : "Server could not complete the request",
-    });
+  res.status(e.status || 500).json({
+    error: e.status ? e.message : "Server could not complete the request",
+  });
 });
 await initStore();
 let ticking = false;
@@ -721,11 +817,21 @@ setInterval(async () => {
       sensor.reading = Number(value.toFixed(2));
       sensor.updatedAt = now();
       const before = sensor.status;
+      const pipeline = state.infrastructure_assets.find(
+        (asset) => asset.id === sensor.assetId && asset.type === "pipeline",
+      );
+      const exceedsPipeCapacity =
+        sensor.type === "Flow" &&
+        pipeline?.maxSafeFlowLpm != null &&
+        value > pipeline.maxSafeFlowLpm;
       sensor.status =
-        value < sensor.normalMin || value > sensor.normalMax
+        exceedsPipeCapacity ||
+        value < sensor.normalMin ||
+        value > sensor.normalMax
           ? "warning"
           : "online";
-      if (session?.severity === "Critical") sensor.status = "critical";
+      if (exceedsPipeCapacity || session?.severity === "Critical")
+        sensor.status = "critical";
       const reading = {
         id: randomUUID(),
         sensorId: sensor.id,
@@ -753,17 +859,32 @@ setInterval(async () => {
       const pb = state.simulation_readings.find(
         (r) => r.sensorId === pressure?.id,
       )?.baseline;
+      const pipeline = state.infrastructure_assets.find(
+        (asset) => asset.id === session.assetId && asset.type === "pipeline",
+      );
+      const flowLimitExceeded =
+        flow?.reading != null &&
+        pipeline?.maxSafeFlowLpm != null &&
+        flow.reading > pipeline.maxSafeFlowLpm;
       if (
         flow &&
         pressure &&
         fb &&
         pb &&
-        detectAnomaly(flow.reading, pressure.reading, fb, pb, state.settings[0])
+        (detectAnomaly(
+          flow.reading,
+          pressure.reading,
+          fb,
+          pb,
+          state.settings[0],
+        ) ||
+          flowLimitExceeded)
       ) {
         const { incident } = createIncident(
           {
-            description:
-              "Suspected Leak — Requires Verification. Simulated flow increase and pressure decrease exceeded configured thresholds.",
+            description: flowLimitExceeded
+              ? `Suspected Leak — Requires Verification. Simulated flow exceeded the configured ${pipeline?.nominalDiameterMm} mm pipe limit of ${pipeline?.maxSafeFlowLpm} L/min.`
+              : "Suspected Leak — Requires Verification. Simulated flow increase and pressure decrease exceeded configured thresholds.",
             location: flow.location,
             gps: flow.gps,
             category: "Water leak",

@@ -69,6 +69,21 @@ const navigation = [
   ["/reports", "Reports", FileChartColumn],
   ["/settings", "Settings", Settings],
 ] as const;
+const allowedNavigation: Record<User["role"], string[]> = {
+  admin: navigation.map(([path]) => path),
+  operator: navigation
+    .map(([path]) => path)
+    .filter((path) => path !== "/settings"),
+  technician: [
+    "/",
+    "/monitoring",
+    "/sensors",
+    "/incidents",
+    "/maintenance",
+    "/map",
+  ],
+  resident: [],
+};
 export default function App() {
   const location = useLocation();
   const [user, setUser] = useState<User | null>(null);
@@ -273,7 +288,7 @@ function Workspace({
         api("/infrastructure"),
         api(`/incidents?${query}`),
         api(`/analytics/overview?${query}`),
-        api("/simulations"),
+        user.role === "technician" ? Promise.resolve([]) : api("/simulations"),
         api("/maintenance/tasks"),
         api("/notifications"),
         api("/settings"),
@@ -357,23 +372,26 @@ function Workspace({
           WORKSPACE <span>NW</span>
         </div>
         <nav>
-          {navigation.map(([path, label, Icon], i) => (
-            <NavLink
-              end={path === "/"}
-              key={path}
-              to={path}
-              title={label}
-              onClick={() => {
-                if (window.innerWidth < 800) setCollapsed(true);
-              }}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-              {i === 5 && (result.data?.summary.openTickets ?? 0) > 0 && (
-                <i>{result.data?.summary.openTickets}</i>
-              )}
-            </NavLink>
-          ))}
+          {navigation
+            .filter(([path]) => allowedNavigation[user.role].includes(path))
+            .map(([path, label, Icon]) => (
+              <NavLink
+                end={path === "/"}
+                key={path}
+                to={path}
+                title={label}
+                onClick={() => {
+                  if (window.innerWidth < 800) setCollapsed(true);
+                }}
+              >
+                <Icon size={18} />
+                <span>{label}</span>
+                {path === "/incidents" &&
+                  (result.data?.summary.openTickets ?? 0) > 0 && (
+                    <i>{result.data?.summary.openTickets}</i>
+                  )}
+              </NavLink>
+            ))}
         </nav>
         <div className="sidebar-bottom">
           <div className="demo-note">
@@ -574,15 +592,25 @@ function Workspace({
               <Routes>
                 <Route path="/" element={<Overview />} />
                 <Route path="/monitoring" element={<Monitoring />} />
-                <Route path="/digital-twin" element={<TwinPage />} />
+                {user.role !== "technician" && (
+                  <Route path="/digital-twin" element={<TwinPage />} />
+                )}
                 <Route path="/sensors" element={<SensorsPage />} />
-                <Route path="/simulation" element={<Simulations />} />
+                {user.role !== "technician" && (
+                  <Route path="/simulation" element={<Simulations />} />
+                )}
                 <Route path="/incidents" element={<IncidentsPage />} />
                 <Route path="/maintenance" element={<MaintenancePage />} />
-                <Route path="/analytics" element={<Analytics />} />
+                {user.role !== "technician" && (
+                  <Route path="/analytics" element={<Analytics />} />
+                )}
                 <Route path="/map" element={<MapPage />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                {user.role !== "technician" && (
+                  <Route path="/reports" element={<Reports />} />
+                )}
+                {user.role === "admin" && (
+                  <Route path="/settings" element={<SettingsPage />} />
+                )}
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </DataContext.Provider>

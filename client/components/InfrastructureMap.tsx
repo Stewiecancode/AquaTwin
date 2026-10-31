@@ -79,6 +79,14 @@ export default function InfrastructureMap({
                 {a.name}
                 <br />
                 Fictional demonstration pipeline
+                {a.nominalDiameterMm != null && (
+                  <>
+                    <br />
+                    DN {a.nominalDiameterMm} · limit{" "}
+                    {a.maxSafeFlowLpm?.toLocaleString()} L/min ·{" "}
+                    {a.maxSafeVelocityMps} m/s
+                  </>
+                )}
               </Popup>
             </Polyline>
           ) : (

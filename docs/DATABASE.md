@@ -7,11 +7,11 @@ Shared TypeScript types and input schemas live in `shared/domain.ts`. Production
 | municipalities | ID and display name |
 | users | Firebase UID document: role, team, municipality; provisioned through Firebase console |
 | roles | Role IDs and descriptive permission labels; actual enforcement lives on API routes |
-| infrastructure_assets | Asset ID, name, type, zone, GPS, optional pipeline path / model mesh |
+| infrastructure_assets | Asset ID, name, type, zone, GPS, optional pipeline path / model mesh, nominal diameter and safe flow / velocity thresholds |
 | sensors | Full registry, calibration, thresholds, source, coordinates, last reading, connectivity |
 | sensor_readings | Production numeric measurement, sensor ID, source, baseline, server timestamp |
 | simulation_readings | Separate demo measurements and optional simulation session association |
-| incidents | Reference, tracking hash, category, location, workflow, ownership, private notes/contact, bounded evidence |
+| incidents | Reference, tracking hash, category, location, workflow, ownership, private notes/contact, optional Open-Meteo context, bounded evidence |
 | incident_status_history | Immutable timestamped status-action records referencing incident ID |
 | maintenance_tasks | Preventive job, assigned team, due date, status |
 | maintenance_actions | Timestamped actor/action/resource records |
