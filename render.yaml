@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: aquatwin-api
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DEMO_MODE
+        value: "false"
+      - key: STORAGE_DRIVER
+        value: firestore
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: MUNICIPALITY_ID
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/firebase-admin.json

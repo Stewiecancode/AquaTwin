@@ -1,0 +1,1 @@
+Place your Blender export at `municipal-water-network.glb` in this directory. Do not commit sensitive municipal models without authorisation. Use metres, retain meaningful mesh names, and apply object transforms before exporting. Sensor model coordinates use the model's own world coordinates; the viewer does not recenter or rescale the model. No final municipal model is supplied.
