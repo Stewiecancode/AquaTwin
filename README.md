@@ -27,13 +27,15 @@ npm test
 - Public resident reporting with map/GPS, optional photo/contact, random reference and private tracking key.
 - Ordered incident workflow: **Reported → Validated → Assigned → In Progress → Resolved → Verified → Closed**, plus supervisor reopening.
 - Team assignment, repair notes, evidence, costs/materials, response targets, preventive tasks, and timestamped audit history.
-- Interactive fictional infrastructure map and a Blender-ready GLB/GLTF viewer. No final municipal 3D model is supplied.
+- Interactive fictional infrastructure map and a township GLB viewer with transparent pipes, controller-driven water flow and L-01 leak effects.
 - Historical charts, monthly/quarterly incident comparison, transparent inspection rules, and privacy-filtered CSV exports.
 - Firebase Authentication token validation, backend role checks, and Firestore persistence when configured; loopback-only demo identities and a persistent local adapter by default.
 
 **All seeded assets are fictional, all generated telemetry is SIMULATED, and loss values are estimates. An anomaly is a suspected leak requiring human verification.** No device-control endpoint exists.
 
 ## Documentation
+
+- [Township viewer, manual controller startup and leak controls](docs/TOWNSHIP-CONTROLLER.md)
 
 - [Setup, Firebase, demo walkthrough, deployment, and limits](docs/SETUP.md)
 - [REST API and Socket.IO events](docs/API.md)

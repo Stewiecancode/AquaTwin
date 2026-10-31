@@ -704,6 +704,7 @@ export function TwinPage() {
           sensors={d.sensors}
           incidents={d.incidents}
           onSensor={setSelected}
+          canControl={d.user.role === "admin" || d.user.role === "operator"}
         />
       </Suspense>
       </ViewerBoundary>
