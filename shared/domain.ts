@@ -22,6 +22,38 @@ export const statuses = [
 ] as const;
 export const roles = ["admin", "operator", "technician", "resident"] as const;
 export type Role = (typeof roles)[number];
+export const pipeDiametersMm = [15, 20, 22, 25, 32, 40, 50, 75, 110] as const;
+export const pipeFlowLimitsLpm: Record<
+  (typeof pipeDiametersMm)[number],
+  number
+> = {
+  15: 20,
+  20: 37,
+  22: 60,
+  25: 60,
+  32: 100,
+  40: 150,
+  50: 230,
+  75: 600,
+  110: 600,
+};
+export const pipeVelocityLimitsMps: Record<
+  (typeof pipeDiametersMm)[number],
+  number
+> = {
+  15: 2,
+  20: 2,
+  22: 2,
+  25: 2,
+  32: 2,
+  40: 2,
+  50: 2,
+  75: 2.5,
+  110: 3,
+};
+export const pipeDiameterSchema = z.enum(
+  pipeDiametersMm.map(String) as [string, ...string[]],
+);
 export const coordinates = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
@@ -83,6 +115,9 @@ export type Asset = {
   gps: { lat: number; lng: number };
   path?: [number, number][];
   modelComponent?: string;
+  nominalDiameterMm?: (typeof pipeDiametersMm)[number] | null;
+  maxSafeVelocityMps?: number | null;
+  maxSafeFlowLpm?: number | null;
 };
 export const evidenceSchema = z.object({
   name: z.string().max(120),
@@ -92,6 +127,14 @@ export const evidenceSchema = z.object({
     .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/),
   stage: z.enum(["report", "before", "after"]),
 });
+export const weatherContextSchema = z.object({
+  source: z.literal("Open-Meteo"),
+  observedAt: z.string().min(1).max(40),
+  temperatureC: z.number().finite().min(-100).max(70),
+  precipitationMm: z.number().finite().min(0).max(1000),
+  weatherCode: z.number().int().min(0).max(99),
+});
+export type WeatherContext = z.infer<typeof weatherContextSchema>;
 export const reportSchema = z
   .object({
     description: z.string().min(10).max(2000),
@@ -107,6 +150,7 @@ export const reportSchema = z
     contact: z.string().max(150).default(""),
     consent: z.boolean().default(false),
     evidence: z.array(evidenceSchema).max(3).default([]),
+    weatherContext: weatherContextSchema.optional(),
   })
   .refine((v) => !v.contact || v.consent, {
     message: "Consent is required when supplying contact details",
@@ -132,6 +176,7 @@ export type Incident = {
   targetAt: string;
   history: History[];
   evidence: z.infer<typeof evidenceSchema>[];
+  weatherContext?: WeatherContext;
   notes: string;
   cost: number;
   materials: string;

@@ -7,16 +7,23 @@ import {
   CheckCircle2,
   Search,
   Copy,
+  CloudSun,
 } from "lucide-react";
 import { api } from "../api";
 import { Button, Badge, Field, date } from "../components/ui";
 import InfrastructureMap from "../components/InfrastructureMap";
 import { readPhoto } from "./Incidents";
 import { Brand } from "../components/Brand";
+import { describeWeatherCode, fetchWeatherContext } from "../weather";
+import type { WeatherContext } from "../../shared/domain";
 export function PublicPage() {
   const [tab, setTab] = useState("report");
   const [gps, setGps] = useState({ lat: -25.85, lng: 25.65 });
   const [pinned, setPinned] = useState(false);
+  const [weatherContext, setWeatherContext] =
+    useState<WeatherContext | null>(null);
+  const [weatherBusy, setWeatherBusy] = useState(false);
+  const [weatherError, setWeatherError] = useState("");
   const [photo, setPhoto] = useState<{
     name: string;
     data: string;
@@ -29,6 +36,12 @@ export function PublicPage() {
     trackingKey: string;
   } | null>(null);
   const [tracking, setTracking] = useState<any>(null);
+  const selectLocation = (position: { lat: number; lng: number }) => {
+    setGps(position);
+    setPinned(true);
+    setWeatherContext(null);
+    setWeatherError("");
+  };
   return (
     <div className="public-page">
       <header>
@@ -129,6 +142,7 @@ export function PublicPage() {
                       contact: f.get("contact"),
                       consent: f.get("consent") === "on",
                       evidence: photo ? [photo] : [],
+                      ...(weatherContext ? { weatherContext } : {}),
                     }),
                   );
                 } catch (e) {
@@ -175,13 +189,11 @@ export function PublicPage() {
                       return;
                     }
                     navigator.geolocation.getCurrentPosition(
-                      (p) => {
-                        setGps({
+                      (p) =>
+                        selectLocation({
                           lat: p.coords.latitude,
                           lng: p.coords.longitude,
-                        });
-                        setPinned(true);
-                      },
+                        }),
                       () =>
                         setError(
                           "GPS permission unavailable. Select a location on the map instead.",
@@ -196,8 +208,7 @@ export function PublicPage() {
               <InfrastructureMap
                 key={pinned ? "selected" : "initial"}
                 onPick={(lat, lng) => {
-                  setGps({ lat, lng });
-                  setPinned(true);
+                  selectLocation({ lat, lng });
                 }}
                 position={gps}
               />
@@ -206,6 +217,59 @@ export function PublicPage() {
                   ? `Selected: ${gps.lat.toFixed(6)}, ${gps.lng.toFixed(6)}`
                   : "No location selected. Click the map to place a pin."}
               </p>
+              <div className="weather-lookup">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!pinned || weatherBusy}
+                  onClick={async () => {
+                    setWeatherBusy(true);
+                    setWeatherError("");
+                    setWeatherContext(null);
+                    try {
+                      setWeatherContext(
+                        await fetchWeatherContext(gps.lat, gps.lng),
+                      );
+                    } catch (e) {
+                      setWeatherError(
+                        e instanceof Error
+                          ? e.message
+                          : "Weather lookup failed.",
+                      );
+                    } finally {
+                      setWeatherBusy(false);
+                    }
+                  }}
+                >
+                  <CloudSun size={15} />
+                  {weatherBusy ? "Checking weather…" : "Check local weather"}
+                </Button>
+                <p className="fine-print">
+                  Optional context from{" "}
+                  <a
+                    href="https://open-meteo.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open-Meteo
+                  </a>
+                  . The selected pin is rounded to about 11 km before lookup;
+                  weather is not a sensor reading.
+                </p>
+                {weatherContext && (
+                  <p className="weather-result" role="status">
+                    {describeWeatherCode(weatherContext.weatherCode)} ·{" "}
+                    {weatherContext.temperatureC} °C ·{" "}
+                    {weatherContext.precipitationMm} mm precipitation ·{" "}
+                    {weatherContext.observedAt.replace("T", " ")}
+                  </p>
+                )}
+                {weatherError && (
+                  <p className="error" role="alert">
+                    {weatherError}
+                  </p>
+                )}
+              </div>
               <Field label="Describe the problem">
                 <textarea
                   name="description"

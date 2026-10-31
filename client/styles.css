@@ -1453,6 +1453,65 @@ input[type="checkbox"] {
   justify-content: space-between;
   margin: 20px 0 12px;
 }
+.pipe-thresholds {
+  grid-column: 1 / -1;
+}
+.pipe-threshold-row {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.pipe-threshold-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.pipe-saved {
+  margin: 10px 0;
+  color: #80dbc9;
+  font-size: 11px;
+}
+.weather-lookup {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #243b4e;
+  border-radius: 6px;
+  background: #0a2033;
+}
+.weather-lookup .fine-print {
+  max-width: 560px;
+}
+.weather-result {
+  color: #b7dff0;
+  font-size: 12px;
+}
+.weather-context {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #243b4e;
+  border-radius: 6px;
+  background: #0a2033;
+  color: #b7dff0;
+  font-size: 11px;
+}
+.weather-context > svg {
+  flex-shrink: 0;
+}
+.weather-context small {
+  margin-top: 5px;
+}
+.weather-context a,
+.weather-lookup a {
+  color: #7bcaf0;
+  text-decoration: underline;
+}
 .checkbox {
   display: flex;
   gap: 10px;
@@ -1621,6 +1680,9 @@ input[type="checkbox"] {
   .grid-two {
     grid-template-columns: 1fr;
   }
+  .pipe-threshold-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .page-heading {
     align-items: flex-start;
   }
@@ -1649,6 +1711,9 @@ input[type="checkbox"] {
   }
 }
 @media (max-width: 600px) {
+  .pipe-threshold-fields {
+    grid-template-columns: 1fr;
+  }
   .sidebar {
     width: 64px;
     padding: 20px 4px;

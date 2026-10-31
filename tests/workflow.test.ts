@@ -11,8 +11,10 @@ const base = `http://127.0.0.1:${port}/api/v1`;
 let processHandle: ChildProcess;
 let directory: string;
 let admin = "";
+let operator = "";
 let technician = "";
 let socket: Socket;
+let technicianSocket: Socket | undefined;
 const request = async (
   path: string,
   method = "GET",
@@ -56,6 +58,7 @@ async function start() {
 }
 async function stop() {
   socket?.disconnect();
+  technicianSocket?.disconnect();
   if (processHandle?.exitCode === null) {
     processHandle.kill();
     await new Promise<void>((r) => processHandle.once("exit", () => r()));
@@ -75,6 +78,72 @@ after(async () => {
 });
 test("complete municipal workflow, privacy, role restrictions, simulation, and restart persistence", async () => {
   assert.equal((await request("/sensors", "GET", undefined, "")).status, 401);
+  assert.equal(
+    (
+      await request(
+        "/infrastructure/pipeline-a",
+        "PATCH",
+        {
+          nominalDiameterMm: "15",
+          maxSafeFlowLpm: 20,
+          maxSafeVelocityMps: 2,
+        },
+        technician,
+      )
+    ).status,
+    403,
+  );
+
+  const roleSocket = io(`http://127.0.0.1:${port}`, {
+    auth: { token: technician },
+  });
+  technicianSocket = roleSocket;
+  await new Promise<void>((resolve, reject) => {
+    roleSocket.once("connect", () => resolve());
+    roleSocket.once("connect_error", reject);
+  });
+  const receivedIncidentIds = new Set<string>();
+  for (const event of [
+    "incident:created",
+    "incident:assigned",
+    "incident:updated",
+  ])
+    roleSocket.on(event, ({ id }: { id: string }) =>
+      receivedIncidentIds.add(id),
+    );
+  assert.equal(
+    (
+      await request("/infrastructure/pipeline-a", "PATCH", {
+        nominalDiameterMm: "15",
+        maxSafeFlowLpm: 20,
+        maxSafeVelocityMps: 2,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request("/infrastructure/pipeline-a", "PATCH", {
+        nominalDiameterMm: "16",
+        maxSafeFlowLpm: 20,
+        maxSafeVelocityMps: 2,
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await request("/infrastructure")).data.find(
+      (asset: any) => asset.id === "pipeline-a",
+    ).maxSafeFlowLpm,
+    20,
+  );
+  const weatherContext = {
+    source: "Open-Meteo",
+    observedAt: "2026-10-31T17:00",
+    temperatureC: 22.4,
+    precipitationMm: 0,
+    weatherCode: 2,
+  };
   const reported = await request(
     "/incidents",
     "POST",
@@ -85,6 +154,7 @@ test("complete municipal workflow, privacy, role restrictions, simulation, and r
       category: "Water leak",
       contact: "resident@example.test",
       consent: true,
+      weatherContext,
     },
     "",
   );
@@ -115,6 +185,7 @@ test("complete municipal workflow, privacy, role restrictions, simulation, and r
   const incident = list.find((i: any) => i.reference === reference);
   assert.equal(incident.contact, undefined);
   assert.equal(incident.trackingHash, undefined);
+  assert.deepEqual(incident.weatherContext, weatherContext);
   assert.equal(
     (
       await request(`/incidents/${incident.id}`, "PATCH", {
@@ -267,6 +338,12 @@ test("complete municipal workflow, privacy, role restrictions, simulation, and r
   await anomaly;
   const sessions = (await request("/simulations")).data;
   assert.ok(sessions.find((s: any) => s.id === simulation.data.id).incidentId);
+  const capacityIncident = (await request("/incidents")).data.find(
+    (i: any) =>
+      i.id ===
+      sessions.find((s: any) => s.id === simulation.data.id).incidentId,
+  );
+  assert.match(capacityIncident.description, /15 mm pipe limit of 20 L\/min/);
   assert.equal(
     (await request(`/simulations/${simulation.data.id}/stop`, "POST")).status,
     200,
@@ -278,10 +355,255 @@ test("complete municipal workflow, privacy, role restrictions, simulation, and r
     .token;
   assert.equal((await request("/incidents")).data.length, beforeRestart);
   assert.equal(
+    (await request("/infrastructure")).data.find(
+      (asset: any) => asset.id === "pipeline-a",
+    ).nominalDiameterMm,
+    15,
+  );
+  assert.equal(
     (await request("/public/track", "POST", { reference, trackingKey }, ""))
       .data.status,
     "Closed",
   );
+});
+test("role access is enforced across admin, operator, technician, and resident paths", async () => {
+  admin = (await request("/auth/demo", "POST", { role: "admin" }, "")).data
+    .token;
+  operator = (await request("/auth/demo", "POST", { role: "operator" }, ""))
+    .data.token;
+  technician = (await request("/auth/demo", "POST", { role: "technician" }, ""))
+    .data.token;
+  assert.equal(
+    (await request("/auth/demo", "POST", { role: "resident" }, "")).status,
+    400,
+  );
+
+  for (const [path, method, body] of [
+    ["/settings", "PATCH", { flowIncrease: 30, pressureDrop: 25 }],
+    ["/demo/reset", "POST", {}],
+    [
+      "/infrastructure/pipeline-a",
+      "PATCH",
+      {
+        nominalDiameterMm: "15",
+        maxSafeFlowLpm: 20,
+        maxSafeVelocityMps: 2,
+      },
+    ],
+    ["/sensors", "POST", {}],
+    ["/audit", "GET", undefined],
+  ] as const) {
+    assert.equal(
+      (await request(path, method, body, operator)).status,
+      403,
+      `operator must not access ${method} ${path}`,
+    );
+    if (path !== "/audit")
+      assert.equal(
+        (await request(path, method, body, technician)).status,
+        403,
+        `technician must not access ${method} ${path}`,
+      );
+  }
+  assert.equal(
+    (await request("/simulations", "GET", undefined, operator)).status,
+    200,
+  );
+  assert.equal(
+    (await request("/simulations", "GET", undefined, technician)).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(
+        "/simulations/start",
+        "POST",
+        { assetId: "pipeline-a", severity: "Minor" },
+        technician,
+      )
+    ).status,
+    403,
+  );
+
+  const roleSocket = io(`http://127.0.0.1:${port}`, {
+    auth: { token: technician },
+  });
+  technicianSocket = roleSocket;
+  await new Promise<void>((resolve, reject) => {
+    roleSocket.once("connect", () => resolve());
+    roleSocket.once("connect_error", reject);
+  });
+  const receivedIncidentIds = new Set<string>();
+  for (const event of [
+    "incident:created",
+    "incident:assigned",
+    "incident:updated",
+  ])
+    roleSocket.on(event, ({ id }: { id: string }) =>
+      receivedIncidentIds.add(id),
+    );
+
+  const task = await request(
+    "/maintenance/tasks",
+    "POST",
+    {
+      title: "Inspect team Bravo main",
+      team: "Team Bravo",
+      zone: "Zone B",
+      targetAt: new Date(Date.now() + 86400000).toISOString(),
+    },
+    operator,
+  );
+  assert.equal(task.status, 201);
+  assert.ok(
+    !(
+      await request("/maintenance/tasks", "GET", undefined, technician)
+    ).data.some((item: any) => item.id === task.data.id),
+  );
+  assert.equal(
+    (
+      await request(
+        `/maintenance/tasks/${task.data.id}`,
+        "PATCH",
+        { status: "In Progress" },
+        technician,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(
+        `/maintenance/tasks/${task.data.id}`,
+        "PATCH",
+        { status: "In Progress" },
+        operator,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        `/maintenance/tasks/${task.data.id}`,
+        "PATCH",
+        { status: "Completed" },
+        operator,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        `/maintenance/tasks/${task.data.id}`,
+        "PATCH",
+        { status: "In Progress" },
+        operator,
+      )
+    ).status,
+    400,
+  );
+
+  const report = await request(
+    "/incidents",
+    "POST",
+    {
+      description: "An out of team incident used for role authorization tests.",
+      location: "Test street corner",
+      gps: { lat: -25.85, lng: 25.65 },
+      category: "Water leak",
+    },
+    "",
+  );
+  const incidents = (await request("/incidents", "GET", undefined, admin)).data;
+  const created = incidents.find(
+    (item: any) => item.reference === report.data.reference,
+  );
+  assert.equal(
+    (
+      await request(
+        `/incidents/${created.id}`,
+        "PATCH",
+        { status: "Validated" },
+        admin,
+      )
+    ).status,
+    200,
+  );
+  await request(
+    `/incidents/${created.id}/assign`,
+    "POST",
+    {
+      team: "Team Bravo",
+      targetAt: new Date(Date.now() + 86400000).toISOString(),
+    },
+    operator,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(receivedIncidentIds.has(created.id), false);
+  assert.ok(
+    !(await request("/incidents", "GET", undefined, technician)).data.some(
+      (item: any) => item.id === created.id,
+    ),
+  );
+  assert.equal(
+    (
+      await request(
+        `/incidents/${created.id}`,
+        "PATCH",
+        { status: "In Progress" },
+        technician,
+      )
+    ).status,
+    403,
+  );
+
+  const teamReport = await request(
+    "/incidents",
+    "POST",
+    {
+      description: "An assigned team incident used for realtime access tests.",
+      location: "Test street corner",
+      gps: { lat: -25.85, lng: 25.65 },
+      category: "Water leak",
+    },
+    "",
+  );
+  const teamIncident = (
+    await request("/incidents", "GET", undefined, admin)
+  ).data.find((item: any) => item.reference === teamReport.data.reference);
+  const assignedIncidentEvent = new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(
+      () =>
+        reject(Error("Assigned incident event was not delivered to its team")),
+      2000,
+    );
+    const check = ({ id }: { id: string }) => {
+      if (id !== teamIncident.id) return;
+      clearTimeout(timeout);
+      roleSocket.off("incident:assigned", check);
+      resolve();
+    };
+    roleSocket.on("incident:assigned", check);
+  });
+  await request(
+    `/incidents/${teamIncident.id}`,
+    "PATCH",
+    { status: "Validated" },
+    admin,
+  );
+  await request(
+    `/incidents/${teamIncident.id}/assign`,
+    "POST",
+    {
+      team: "Team Alpha",
+      targetAt: new Date(Date.now() + 86400000).toISOString(),
+    },
+    operator,
+  );
+  await assignedIncidentEvent;
+  roleSocket.disconnect();
 });
 test("anomaly rules require both signals and sensor ranges validate", () => {
   assert.equal(
