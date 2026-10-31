@@ -24,12 +24,15 @@ npm test
 - Responsive municipal operations dashboard with backend-derived KPIs, source labels, filters, sensor charts, and Socket.IO refresh.
 - Ten-category sensor registry with registration, editing, calibration metadata, GPS, thresholds, detail charts, and saved model placement.
 - Isolated leak simulator, configurable combined flow/pressure anomaly rules, notification centre, unique sessions, linked suspected-leak incidents, stop and reset actions.
+- Administrator-configurable nominal pipe diameters and approximate flow/velocity limits; flow-limit breaches mark sensors critical and simulated breaches raise suspected incidents.
 - Public resident reporting with map/GPS, optional photo/contact, random reference and private tracking key.
+- Optional keyless Open-Meteo weather context for reports; rounded coordinates are requested only after the reporter chooses the lookup.
 - Ordered incident workflow: **Reported → Validated → Assigned → In Progress → Resolved → Verified → Closed**, plus supervisor reopening.
 - Team assignment, repair notes, evidence, costs/materials, response targets, preventive tasks, and timestamped audit history.
 - Interactive fictional infrastructure map and a township GLB viewer with transparent pipes, controller-driven water flow and L-01 leak effects.
 - Historical charts, monthly/quarterly incident comparison, transparent inspection rules, and privacy-filtered CSV exports.
 - Firebase Authentication token validation, backend role checks, and Firestore persistence when configured; loopback-only demo identities and a persistent local adapter by default.
+- Server-enforced Administrator, Operator, Technician, and Resident access policies, including team-scoped technician work and realtime incident events.
 
 **All seeded assets are fictional, all generated telemetry is SIMULATED, and loss values are estimates. An anomaly is a suspected leak requiring human verification.** No device-control endpoint exists.
 

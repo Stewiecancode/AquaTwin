@@ -4,35 +4,49 @@ Base path: `/api/v1`. Success responses use `{ "data": ... }`; failures use `{ "
 
 Protected requests require `Authorization: Bearer <Firebase ID token>`. Local demo login returns an opaque, expiring session token accepted only when demo mode is enabled. Authentication is also required at the Socket.IO handshake (`auth.token`). Websocket access expires after one hour; REST reads recheck Firebase token revocation and the Firestore user profile.
 
+## Role access
+
+The API is the authorization boundary; hiding dashboard controls is not sufficient access control.
+
+| Role | API access |
+|---|---|
+| Administrator | All staff reads and writes, including sensor and pipeline configuration, detection settings, audit, demo reset, assignment, verification, reports, and simulations. |
+| Operator | Operational reads; incident validation, assignment, verification, and closure; maintenance scheduling and updates; demo simulations; report exports. Cannot configure sensors, pipelines, or detection rules, reset demo data, or read audit logs. |
+| Technician | Staff monitoring reads. Incident and maintenance-task reads are restricted to the technician's team. Can update only that team's active assigned incidents (`Assigned`/`In Progress`) and tasks, following `Scheduled → In Progress → Completed`; cannot validate, assign, verify, close, reopen, schedule work, simulate, export, or configure. |
+| Resident | No staff API or Socket.IO access. May submit a public incident and track it only with its reference and private tracking key. |
+
+Production technician Firebase profiles must have a non-empty `team`. Every endpoint that mutates staff data checks the role on the server. Technician incident and maintenance access is checked against the assigned team on each request. Technician analytics and notifications are likewise team-scoped. Technician realtime incident events are restricted to their team; staff sensor telemetry events are broadcast to authenticated non-resident staff. Demo login accepts only `admin`, `operator`, or `technician`.
+
 | Method | Path | Access / purpose |
 |---|---|---|
 | GET | `/health` | Public configuration/availability; no credentials |
 | POST | `/auth/demo` | Loopback demo only; body `{role}` |
 | GET | `/auth/me` | Authenticated staff profile |
 | POST | `/auth/logout` | End demo session and disconnect associated sockets |
-| POST | `/incidents` | Public reporting; rate limited |
+| POST | `/incidents` | Public reporting; rate limited; optional validated `weatherContext` |
 | POST | `/public/track` | Public reference + private tracking key; rate limited |
-| GET | `/dashboard/summary` | Staff; derived network KPIs |
-| GET | `/sensors` | Staff sensor registry |
+| GET | `/dashboard/summary` | Authenticated staff; technician incident KPIs are team-scoped |
+| GET | `/sensors` | Authenticated staff sensor registry |
 | POST | `/sensors` | Administrator; full sensor schema |
 | PATCH | `/sensors/:id` | Administrator; update metadata or model placement |
-| GET | `/sensors/:id` | Sensor metadata and maintenance action references |
-| GET | `/sensors/:id/readings` | Sensor history |
-| GET | `/infrastructure` | Staff assets and fictional/verified GIS paths |
+| GET | `/sensors/:id` | Authenticated staff; sensor metadata and maintenance action references |
+| GET | `/sensors/:id/readings` | Authenticated staff; sensor history |
+| GET | `/infrastructure` | Authenticated staff; assets and fictional/verified GIS paths |
+| PATCH | `/infrastructure/:id` | Administrator; set a pipeline's `nominalDiameterMm`, `maxSafeFlowLpm`, and `maxSafeVelocityMps` |
 | GET | `/incidents` | Staff; technicians see their team only |
-| PATCH | `/incidents/:id` | Ordered workflow, notes, cost, materials, evidence |
+| PATCH | `/incidents/:id` | Admin/operator: workflow and incident updates. Technician: assigned active work only; may progress to `In Progress` or `Resolved` and add repair details. |
 | POST | `/incidents/:id/assign` | Admin/operator; `{team,targetAt}` |
 | POST | `/incidents/:id/verify` | Admin/operator; `{notes}` for a resolved incident |
-| GET | `/maintenance/tasks` | Staff; team-restricted for technicians |
+| GET | `/maintenance/tasks` | Authenticated staff; technicians see their team's tasks only |
 | POST | `/maintenance/tasks` | Admin/operator; `{title,team,zone,targetAt}` |
-| PATCH | `/maintenance/tasks/:id` | Assigned staff; `{status}` |
-| GET | `/simulations` | Staff simulation session history |
+| PATCH | `/maintenance/tasks/:id` | Admin/operator; technicians may update their team's task; `{status}` follows the forward-only task workflow |
+| GET | `/simulations` | Admin/operator simulation history |
 | POST | `/simulations/start` | Admin/operator, demo only; `{assetId,severity}` |
 | POST | `/simulations/:id/stop` | Admin/operator; restore baseline on next tick |
-| GET | `/notifications` | Staff; latest 50 anomaly notifications |
-| GET / PATCH | `/settings` | Read staff / edit admin; flow increase and pressure drop percentages |
+| GET | `/notifications` | Authenticated staff; latest 50; technician results are team-scoped |
+| GET / PATCH | `/settings` | Read authenticated staff / edit administrator; flow increase and pressure drop percentages |
 | POST | `/demo/reset` | Admin, demo only; destructive demo reset |
-| GET | `/analytics/overview` | Filtered readings, incident counts, summary, rule-based insights |
+| GET | `/analytics/overview` | Authenticated staff; technician incident analytics are team-scoped |
 | GET | `/reports/export` | Admin/operator; CSV `kind=incidents` or `kind=readings` |
 | GET | `/audit` | Admin; latest 100 audit events |
 | POST | `/telemetry` | Production device key; `{sensorId,value}` |
@@ -42,11 +56,31 @@ Collection read/report endpoints accept `municipality`, `ward`, `zone`, `sensor`
 Example public report:
 
 ```json
-{"description":"Water pooling near the demonstration junction.","location":"Fictional Branch B junction","gps":{"lat":-25.839,"lng":25.654},"category":"Water leak","contact":"","consent":false,"evidence":[]}
+{"description":"Water pooling near the demonstration junction.","location":"Fictional Branch B junction.","gps":{"lat":-25.839,"lng":25.654},"category":"Water leak","contact":"","consent":false,"evidence":[],"weatherContext":{"source":"Open-Meteo","observedAt":"2026-10-31T17:00","temperatureC":22.4,"precipitationMm":0,"weatherCode":2}}
 ```
 
 The result contains `reference` and `trackingKey`. Tracking returns only reference, status, creation/update timestamps, and status timestamps. It never returns contacts, descriptions, GPS locations, internal notes, staff identities, or evidence.
 
+`weatherContext` is optional and contains a public-report weather snapshot. The community form only requests it after the reporter chooses **Check local weather**; it rounds the pin coordinates to one decimal place before sending them to [Open-Meteo](https://open-meteo.com/). Staff can view the snapshot on the incident. It is contextual forecast data, not verified sensor telemetry.
+
+Pipeline thresholds are configured by administrators with `PATCH /infrastructure/:id` and `{ "nominalDiameterMm": "15", "maxSafeFlowLpm": 20, "maxSafeVelocityMps": 2 }`. A configured flow limit is compared with flow telemetry in L/min; exceeding it marks the sensor critical, and during a simulation raises a suspected-leak incident. Velocity is stored as a design guide and is not inferred from telemetry.
+
+The Settings page provides these approximate reference thresholds:
+
+| Nominal diameter | Common application | Maximum safe velocity | Approximate flow limit |
+|---|---|---:|---:|
+| DN15 | Individual basins, toilets, and sinks | 2.0 m/s | 20 L/min |
+| DN20 | Main branches to bathrooms or kitchens | 2.0 m/s | 37 L/min |
+| DN22 / DN25 | Small residential main entry lines | 2.0 m/s | 60 L/min |
+| DN32 | Large residential mains / multi-bathroom feeds | 2.0 m/s | 100 L/min |
+| DN40 | Small commercial / apartment sub-mains | 2.0 m/s | 150 L/min |
+| DN50 | Commercial headers, irrigation manifolds, apartment risers | 2.0 m/s | 230 L/min |
+| DN75–DN110+ | Municipal distribution, bulk water supply | 2.5–3.0 m/s (buried) | 600+ L/min |
+
+The UI starts DN75 and DN110 at 600 L/min because the API requires a numeric limit; increase it to a verified site-specific value where appropriate. These supplied figures are approximate screening guidance, not engineering design values. Confirm actual internal diameter, material, pressure, run length, applicable standards, and operating conditions before use. The application stores velocity for reference but does not calculate pipe velocity from flow telemetry.
+
 Workflow: `Reported → Validated → Assigned → In Progress → Resolved → Verified → Closed`. The assign and verify endpoints perform their specific transitions. Resolution requires notes. A supervisor may reopen a resolved, verified, or closed case with `PATCH {"status":"Validated","reopen":true,"notes":"Reason"}`. Each action records its actor and timestamp.
 
-Socket events: `sensor:reading`, `sensor:status`, `leak:suspected`, `incident:created`, `incident:assigned`, `incident:updated`, `simulation:started`, `simulation:stopped`, `system:error`. Incident socket payloads carry IDs rather than personal information. No inbound socket mutation handlers are registered.
+Maintenance tasks follow `Scheduled → In Progress → Completed`; backward transitions are rejected. Admins/operators may update any task; technicians may only update tasks assigned to their team.
+
+Socket events: `sensor:reading`, `sensor:status`, `leak:suspected`, `incident:created`, `incident:assigned`, `incident:updated`, `simulation:started`, `simulation:stopped`, `system:error`. Incident socket payloads carry IDs rather than personal information. Technician incident events are team-scoped; simulation events are not sent to technicians. No inbound socket mutation handlers are registered.

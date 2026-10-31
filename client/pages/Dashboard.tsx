@@ -25,7 +25,13 @@ import { TrendChart, Bars } from "../components/Charts";
 import InfrastructureMap from "../components/InfrastructureMap";
 import { exportCsv } from "../api";
 import { SensorForm } from "./Sensors";
-import type { Sensor } from "../../shared/domain";
+import {
+  pipeDiametersMm,
+  pipeFlowLimitsLpm,
+  pipeVelocityLimitsMps,
+  type Asset,
+  type Sensor,
+} from "../../shared/domain";
 const DigitalTwinViewer = lazy(() => import("../components/DigitalTwinViewer"));
 const num = (n: number, d = 0) =>
   n.toLocaleString("en-ZA", { maximumFractionDigits: d });
@@ -570,6 +576,121 @@ function FileIcon() {
     </div>
   );
 }
+function PipeThresholdForm({ asset }: { asset: Asset }) {
+  const d = useData();
+  const [diameter, setDiameter] = useState(
+    asset.nominalDiameterMm?.toString() || "",
+  );
+  const [flowLimit, setFlowLimit] = useState(
+    asset.maxSafeFlowLpm?.toString() || "",
+  );
+  const [velocityLimit, setVelocityLimit] = useState(
+    asset.maxSafeVelocityMps?.toString() || "",
+  );
+  const [saved, setSaved] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const editable = d.user.role === "admin";
+  return (
+    <form
+      className="pipe-threshold-row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setSaved("");
+        setError("");
+        try {
+          await d.perform(`/infrastructure/${asset.id}`, "PATCH", {
+            nominalDiameterMm: diameter,
+            maxSafeFlowLpm: Number(flowLimit),
+            maxSafeVelocityMps: Number(velocityLimit),
+          });
+          setSaved("Pipe thresholds saved.");
+        } catch (e) {
+          setError(
+            e instanceof Error ? e.message : "Could not save thresholds.",
+          );
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <h3>{asset.name}</h3>
+      <div className="pipe-threshold-fields">
+        <Field label="Nominal diameter (DN)">
+          <select
+            required
+            value={diameter}
+            disabled={!editable || busy}
+            onChange={(e) => {
+              const value = e.target.value;
+              setDiameter(value);
+              if (!value) {
+                setFlowLimit("");
+                setVelocityLimit("");
+                return;
+              }
+              const dn = Number(value) as (typeof pipeDiametersMm)[number];
+              setFlowLimit(String(pipeFlowLimitsLpm[dn]));
+              setVelocityLimit(String(pipeVelocityLimitsMps[dn]));
+            }}
+          >
+            <option value="">Select pipe diameter</option>
+            {pipeDiametersMm.map((dn) => (
+              <option key={dn} value={dn}>
+                DN {dn}
+                {dn === 75 || dn === 110 ? "+" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Maximum safe flow (L/min)">
+          <input
+            type="number"
+            min="1"
+            max="100000"
+            step="any"
+            required
+            value={flowLimit}
+            disabled={!editable || busy || !diameter}
+            onChange={(e) => setFlowLimit(e.target.value)}
+          />
+        </Field>
+        <Field label="Maximum safe velocity (m/s)">
+          <input
+            type="number"
+            min="0.1"
+            max="10"
+            step="0.1"
+            required
+            value={velocityLimit}
+            disabled={!editable || busy || !diameter}
+            onChange={(e) => setVelocityLimit(e.target.value)}
+          />
+        </Field>
+      </div>
+      {diameter && (
+        <p className="fine-print">
+          Guide value for DN {diameter}
+          {Number(diameter) >= 75 ? "+" : ""}; the flow limit is checked against
+          L/min telemetry. Velocity is stored as a design guide, not calculated
+          from sensor data. Adjust both to verified local pipe specifications.
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
+      {saved && (
+        <p className="pipe-saved" role="status">
+          {saved}
+        </p>
+      )}
+      {editable && (
+        <Button type="submit" disabled={busy || !diameter}>
+          {busy ? "Saving…" : "Save pipe thresholds"}
+        </Button>
+      )}
+    </form>
+  );
+}
 export function SettingsPage() {
   const d = useData();
   const [flow, setFlow] = useState(d.settings.flowIncrease);
@@ -644,6 +765,20 @@ export function SettingsPage() {
             Reset demo data
           </Button>
         )}
+      </section>
+      <section className="panel form-panel pipe-thresholds">
+        <h2>Pipe capacity thresholds</h2>
+        <p className="muted">
+          Set each pipeline’s nominal diameter and safe flow limit. Exceeding
+          the flow limit marks its flow sensor critical; during a simulation it
+          also raises a suspected-leak incident. These approximate limits are
+          guidance, not engineering design.
+        </p>
+        {d.assets
+          .filter((asset) => asset.type === "pipeline")
+          .map((asset) => (
+            <PipeThresholdForm key={asset.id} asset={asset} />
+          ))}
       </section>
       <Modal
         title="Reset the demonstration?"

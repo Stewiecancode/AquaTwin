@@ -1,8 +1,15 @@
 import { useState } from "react";
-import { ClipboardList, Plus, Search, CheckCircle2 } from "lucide-react";
+import {
+  ClipboardList,
+  Plus,
+  Search,
+  CheckCircle2,
+  CloudSun,
+} from "lucide-react";
 import { useData } from "../context";
 import { Button, Badge, Modal, Field, Empty, date } from "../components/ui";
 import { statuses, type Incident } from "../../shared/domain";
+import { describeWeatherCode } from "../weather";
 export async function readPhoto(file: File) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type))
     throw Error("Choose a JPEG, PNG or WebP photograph");
@@ -187,6 +194,30 @@ function IncidentEditor({ incident: i }: { incident: Incident }) {
         <p className="muted">
           {i.location} · {i.gps.lat.toFixed(5)}, {i.gps.lng.toFixed(5)}
         </p>
+        {i.weatherContext && (
+          <div className="weather-context">
+            <CloudSun size={16} />
+            <div>
+              <b>
+                Open-Meteo · {describeWeatherCode(i.weatherContext.weatherCode)}
+                {" · "}
+                {i.weatherContext.temperatureC} °C ·{" "}
+                {i.weatherContext.precipitationMm} mm precipitation
+              </b>
+              <small>
+                Approximate conditions at {i.weatherContext.observedAt.replace("T", " ")}.
+                Context only, not a sensor reading.{" "}
+                <a
+                  href="https://open-meteo.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Source
+                </a>
+              </small>
+            </div>
+          </div>
+        )}
         <p className="muted">
           Department: {i.department} · Owner: {i.team || "Awaiting assignment"}
         </p>
