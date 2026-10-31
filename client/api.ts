@@ -1,3 +1,4 @@
+import { readApiResponse } from "./api-response";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { QueryClient } from "@tanstack/react-query";
@@ -34,9 +35,7 @@ export async function api<T = any>(
     },
     ...(data !== undefined ? { body: JSON.stringify(data) } : {}),
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || "Request failed");
-  return body.data;
+  return readApiResponse<T>(res);
 }
 export async function loginDemo(role: string) {
   const data = await api("/auth/demo", "POST", { role });
