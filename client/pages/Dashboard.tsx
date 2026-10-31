@@ -1,3 +1,4 @@
+import { ViewerBoundary } from "../components/ViewerBoundary";
 import { useState, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -697,13 +698,16 @@ export function TwinPage() {
   const [selected, setSelected] = useState<Sensor | null>(null);
   return (
     <>
+      <ViewerBoundary>
       <Suspense fallback={<Empty>Loading 3D workspace…</Empty>}>
         <DigitalTwinViewer
           sensors={d.sensors}
           incidents={d.incidents}
           onSensor={setSelected}
+          canControl={d.user.role === "admin" || d.user.role === "operator"}
         />
       </Suspense>
+      </ViewerBoundary>
       <section className="panel">
         <div className="section-heading">
           <div>

@@ -1236,6 +1236,21 @@ input[type="checkbox"] {
   margin-bottom: 24px;
   background: #101c2b;
 }
+.township-panel { padding: 22px; border-bottom: 1px solid var(--border, #243747); }
+.township-panel .section-heading { flex-wrap: wrap; gap: 12px; }
+.township-alert { padding: 12px 16px; margin: 16px 0; border: 1px solid #226276; border-radius: 10px; background: #0e334044; }
+.township-alert small { display: block; margin-top: 6px; }
+.township-alert.is-leaking { border-color: #cf6673; background: #5d182a44; }
+.township-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 16px 0; }
+.township-metrics > div { padding: 14px; background: #122131; border-radius: 10px; }
+.township-metrics span { display:block; color:#a8bdce; font-size:12px; }
+.township-metrics strong { display:block; font-size:24px; margin-top:6px; color:#e8f7ff; }
+.township-metrics small { font-size:12px; color:#a8bdce; }
+.township-controls { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin:18px 0; }
+.township-controls label { display:grid; gap:6px; font-size:12px; }
+.township-controls input { width:130px; padding:10px; border-radius:8px; border:1px solid #355063; background:#0d1b2b; color:#e8f7ff; }
+.township-leak-label { display:block; white-space:nowrap; padding:7px 11px; border-radius:8px; background:#801d34; color:white; font-size:12px; pointer-events:none; }
+@media(max-width:700px) { .township-panel { padding:14px; } .township-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .twin-toolbar {
   display: flex;
   align-items: center;

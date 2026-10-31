@@ -13,6 +13,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { Server } from "socket.io";
 import { z, ZodError } from "zod";
+import { createTwinRouter } from "./twin.js";
 import {
   state,
   initStore,
@@ -231,6 +232,7 @@ api.post("/telemetry", async (req, res) => {
   out(res, { accepted: true }, 201);
 });
 api.use(protect, allow("admin", "operator", "technician"));
+api.use("/twin", createTwinRouter(allow("admin", "operator")));
 api.get("/auth/me", (req, res) => out(res, req.user));
 function filtered(req: Request) {
   const q = req.query;
